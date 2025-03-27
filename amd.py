@@ -127,9 +127,9 @@ class Amd:
         self.append((vvvv | 5) ^ 0x78)
 
     # AVX rules!
-    def movsd(self, reg, rm):
-        self.vex2sd(reg, 0)
-        self.append(0x10)
+    def movapd(self, reg, rm):
+        self.vex2pd(reg, 0)
+        self.append(0x28)
         self.modrm_reg(reg, rm)
         return self
         
@@ -181,8 +181,8 @@ class Amd:
         self.modrm_reg(reg, rm)
         return self
     
-    def vandsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
+    def vandpd(self, reg, vreg, rm):
+        self.vex2pd(reg, vreg)
         self.append(0x54)
         self.modrm_reg(reg, rm)
         return self
@@ -205,38 +205,38 @@ class Amd:
         self.modrm_reg(reg, rm)
         return self
 
-    def vcmpeqpd(self, reg, vreg, rm):
-        self.vex2pd(reg, vreg) 
+    def vcmpeqsd(self, reg, vreg, rm):
+        self.vex2sd(reg, vreg) 
         self.append(0xc2)
         self.modrm_reg(reg, rm)
         self.append(0)
         return self
 
-    def vcmpltpd(self, reg, vreg, rm):
-        self.vex2pd(reg, vreg)
+    def vcmpltsd(self, reg, vreg, rm):
+        self.vex2sd(reg, vreg)
         self.append(0xc2)
-        modrm_reg(reg, rm)
+        self.modrm_reg(reg, rm)
         self.append(1)
         return self
 
     def vcmplesd(self, reg, vreg, rm):
         self.vex2sd(reg, vreg)
         self.append(0xc2)
-        modrm_reg(reg, rm)
+        self.modrm_reg(reg, rm)
         self.append(2)
         return self
 
     def vcmpunordsd(self, reg, vreg, rm):
         self.vex2sd(reg, vreg)
         self.append(0xc2)
-        modrm_reg(reg, rm)
+        self.modrm_reg(reg, rm)
         self.append(3)
         return self
 
     def vcmpneqsd(self, reg, vreg, rm):        
         self.vex2sd(reg, vreg)
         self.append(0xc2)
-        modrm_reg(reg, rm)
+        self.modrm_reg(reg, rm)
         self.append(4)
         return self
         
