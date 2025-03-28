@@ -2,174 +2,205 @@ from sympy import *
 import numbers
 import numpy as np
 
+
 class Unary:
     def __init__(self, op, arg):
         self.op = op
         self.arg = arg
-        self.is_pure = arg.is_pure and is_pure(op) 
-        
+        self.is_pure = arg.is_pure and is_pure(op)
+
     def __repr__(self):
         return f"Unary[{self.is_pure}]('{self.op}', {self.arg})"
-        
-    def compile(self, prog, mem, vt):
-        self.arg.compile(prog, mem, vt)
-        
+
+    def compile(self, dst, prog, mem, vt):
+        self.arg.compile(0, prog, mem, vt)
+
         if self.op == "neg":
             prog.movsd_xmm_mem(1, "rbp", 8 * mem.constant(-0.0))
-            prog.vxorpd(0, 0, 1)
+            prog.vxorpd(dst, 0, 1)
         elif self.op == "abs":
             prog.movsd_xmm_mem(1, "rbp", 8 * mem.constant(-0.0))
-            prog.vandnpd(0, 1, 0)
+            prog.vandnpd(dst, 1, 0)
         elif self.op == "root":
-            prog.vsqrtsd(0, 0)
+            prog.vsqrtsd(dst, 0)
         elif self.op == "square":
-            prog.vmulsd(0, 0, 0)
+            prog.vmulsd(dst, 0, 0)
         elif self.op == "cube":
             prog.vmulsd(1, 0, 0)
-            prog.vmulsd(0, 0, 1)
+            prog.vmulsd(dst, 0, 1)
         elif self.op == "recip":
             prog.movsd_xmm_mem(1, "rbp", 8 * mem.constant(1.0))
-            prog.vdivsd(0, 1, 0)
+            prog.vdivsd(dst, 1, 0)
         elif self.op == "exp":
-            self.call(prog, vt.find("exp")) 
+            self.call(dst, prog, vt.find("exp"))
         elif self.op == "ln":
-            self.call(prog, vt.find("log"))
+            self.call(dst, prog, vt.find("log"))
         elif self.op == "sin":
-            self.call(prog, vt.find("sin"))    
+            self.call(dst, prog, vt.find("sin"))
         elif self.op == "cos":
-            self.call(prog, vt.find("cos"))    
+            self.call(dst, prog, vt.find("cos"))
         elif self.op == "tan":
-            self.call(prog, vt.find("tan"))    
+            self.call(dst, prog, vt.find("tan"))
         elif self.op == "sinh":
-            self.call(prog, vt.find("sinh"))    
+            self.call(dst, prog, vt.find("sinh"))
         elif self.op == "cosh":
-            self.call(prog, vt.find("cosh"))    
+            self.call(dst, prog, vt.find("cosh"))
         elif self.op == "tanh":
-            self.call(prog, vt.find("tanh"))
+            self.call(dst, prog, vt.find("tanh"))
         elif self.op == "arcsin":
-            self.call(prog, vt.find("asin"))    
+            self.call(dst, prog, vt.find("asin"))
         elif self.op == "arccos":
-            self.call(prog, vt.find("acos"))    
+            self.call(dst, prog, vt.find("acos"))
         elif self.op == "arctan":
-            self.call(prog, vt.find("atan"))        
+            self.call(dst, prog, vt.find("atan"))
         elif self.op == "arcsinh":
-            self.call(prog, vt.find("asinh"))    
+            self.call(dst, prog, vt.find("asinh"))
         elif self.op == "arccosh":
-            self.call(prog, vt.find("acosh"))    
+            self.call(dst, prog, vt.find("acosh"))
         elif self.op == "arctanh":
-            self.call(prog, vt.find("atanh"))            
+            self.call(dst, prog, vt.find("atanh"))
         else:
             raise ValueError(f"unary op {self.op} not defined")
- 
-    def call(self, prog, idx):
+
+    def call(self, dst, prog, idx):
         prog.mov_reg_mem("rax", "rbx", 8 * idx)
         prog.call("rax")
-        
+        if dst != 0:
+            prog.movapd(dst, 0)
+
 
 class Binary:
     def __init__(self, op, left, right):
         self.op = op
         self.left = left
-        self.right = right        
-        self.is_pure = left.is_pure and right.is_pure and is_pure(op) 
-        
+        self.right = right
+        self.is_pure = left.is_pure and right.is_pure and is_pure(op)
+
     def __repr__(self):
         return f"Binary[{self.is_pure}]('{self.op}', {self.left}, {self.right})"
-        
-    def compile(self, prog, mem, vt):
-        self.right.compile(prog, mem, vt)
+
+    def compile(self, dst, prog, mem, vt):
         sp = mem.push()
         use_reg = sp < 3 and self.left.is_pure
+
         if use_reg:
-            prog.movapd(3+sp, 0)
+            self.right.compile(3 + sp, prog, mem, vt)
         else:
+            self.right.compile(0, prog, mem, vt)
             prog.movsd_mem_xmm("rsp", 8 * sp, 0)
-        
-        self.left.compile(prog, mem, vt)
+
+        self.left.compile(0, prog, mem, vt)
         sp = mem.pop()
+
         if use_reg:
-            prog.movapd(1, 3+sp)           
-        else:            
+            r = 3 + sp
+        else:
             prog.movsd_xmm_mem(1, "rsp", 8 * sp)
-        
+            r = 1
+
         if self.op == "plus":
-            prog.vaddsd(0, 0, 1)
+            prog.vaddsd(dst, 0, r)
         elif self.op == "minus":
-            prog.vsubsd(0, 0, 1)            
+            prog.vsubsd(dst, 0, r)
         elif self.op == "times":
-            prog.vmulsd(0, 0, 1)            
-        elif self.op == "divide":        
-            prog.vdivsd(0, 0, 1)
+            prog.vmulsd(dst, 0, r)
+        elif self.op == "divide":
+            prog.vdivsd(dst, 0, r)
         elif self.op == "power":
-            self.call(prog, vt.find("pow"))
+            prog.movapd(1, r)
+            self.call(dst, prog, vt.find("pow"))
         elif self.op == "gt":
-            prog.vcmpnlesd(0, 0, 1)
+            prog.vcmpnlesd(dst, 0, r)
         elif self.op == "geq":
-            prog.vcmpnltsd(0, 0, 1)
+            prog.vcmpnltsd(dst, 0, r)
         elif self.op == "lt":
-            prog.vcmpltsd(0, 0, 1)
+            prog.vcmpltsd(dst, 0, r)
         elif self.op == "leq":
-            prog.vcmplesd(0, 0, 1)
+            prog.vcmplesd(dst, 0, r)
         elif self.op == "eq":
-            prog.vcmpeqsd(0, 0, 1)
+            prog.vcmpeqsd(dst, 0, r)
         elif self.op == "neq":
-            prog.vcmpneqsd(0, 0, 1)
+            prog.vcmpneqsd(dst, 0, r)
         elif self.op == "and":
-            prog.vandpd(0, 0, 1)
+            prog.vandpd(dst, 0, r)
         elif self.op == "or":
-            prog.vorpd(0, 0, 1)
+            prog.vorpd(dst, 0, r)
         elif self.op == "xor":
-            prog.vxorpd(0, 0, 1)
+            prog.vxorpd(dst, 0, r)
         else:
             raise ValueError(f"binary op {self.op} not defined")
-            
-    def call(self, prog, idx):
+
+    def call(self, dst, prog, idx):
         prog.mov_reg_mem("rax", "rbx", 8 * idx)
-        prog.call("rax")            
-            
-            
+        prog.call("rax")
+        if dst != 0:
+            prog.movapd(dst, 0)
+
+
 class IfElse:
     def __init__(self, cond, true_val, false_val):
         self.cond = cond
         self.true_val = true_val
         self.false_val = false_val
         self.is_pure = cond.is_pure and true_val.is_pure and false_val.is_pure
-        
+
     def __repr__(self):
         return f"IfElse[{self.is_pure}]({self.cond}, {self.true_val}, {self.false_val})"
-        
-    def compile(self, prog, mem, vt):
-        self.cond.compile(prog, mem, vt)
+
+    def compile(self, dst, prog, mem, vt):
         sp = mem.push()
-        prog.movsd_mem_xmm("rsp", 8 * sp, 0)
-        
-        self.false_val.compile(prog, mem, vt)
+        use_reg_cond = sp < 3 and self.true_val.is_pure and self.false_val.is_pure
+
+        if use_reg_cond:
+            self.cond.compile(3 + sp, prog, mem, vt)
+        else:
+            self.cond.compile(0, prog, mem, vt)
+            prog.movsd_mem_xmm("rsp", 8 * sp, 0)
+
         sp = mem.push()
-        prog.movsd_mem_xmm("rsp", 8 * sp, 0)
-        
-        self.true_val.compile(prog, mem, vt)
+        use_reg_false = sp < 3 and self.true_val.is_pure
+
+        if use_reg_false:
+            self.false_val.compile(3 + sp, prog, mem, vt)
+        else:
+            self.false_val.compile(0, prog, mem, vt)
+            prog.movsd_mem_xmm("rsp", 8 * sp, 0)
+
+        self.true_val.compile(0, prog, mem, vt)
+
         sp = mem.pop()
-        prog.movsd_xmm_mem(1, "rsp", 8 * sp)        
+
+        if use_reg_false:
+            f = 3 + sp
+        else:
+            prog.movsd_xmm_mem(1, "rsp", 8 * sp)
+            f = 1
+
         sp = mem.pop()
-        prog.movsd_xmm_mem(2, "rsp", 8 * sp)
-        
-        prog.vandpd(0, 0, 2)
-        prog.vandnpd(2, 2, 1)
-        prog.vorpd(0, 0, 2)
-        
-       
+
+        if use_reg_cond:
+            c = 3 + sp
+        else:
+            prog.movsd_xmm_mem(2, "rsp", 8 * sp)
+            c = 2
+
+        prog.vandpd(0, 0, c)
+        prog.vandnpd(c, c, f)
+        prog.vorpd(dst, 0, c)
+
+
 class Const:
     def __init__(self, val):
         self.val = float(val)
         self.is_pure = True
-        
+
     def __repr__(self):
         return f"Const({self.val})"
-        
-    def compile(self, prog, mem, vt):
-        prog.movsd_xmm_mem(0, "rbp", 8 * mem.constant(self.val))
-        
-        
+
+    def compile(self, dst, prog, mem, vt):
+        prog.movsd_xmm_mem(dst, "rbp", 8 * mem.constant(self.val))
+
+
 class Var:
     def __init__(self, name):
         self.name = str(name)
@@ -177,11 +208,11 @@ class Var:
 
     def __repr__(self):
         return f"Var('{self.name}')"
-        
-    def compile(self, prog, mem, vt):
-        prog.movsd_xmm_mem(0, "rbp", 8 * mem.index(self.name))
-        
-        
+
+    def compile(self, dst, prog, mem, vt):
+        prog.movsd_xmm_mem(dst, "rbp", 8 * mem.index(self.name))
+
+
 class Eq:
     def __init__(self, lhs, rhs):
         self.lhs = lhs
@@ -189,11 +220,11 @@ class Eq:
 
     def __repr__(self):
         return f"{self.lhs} = {self.rhs}"
-        
-    def compile(self, prog, mem, vt):
-        self.rhs.compile(prog, mem, vt)
-        prog.movsd_mem_xmm("rbp", 8 * mem.index(self.lhs.name), 0)
-        
+
+    def compile(self, dst, prog, mem, vt):
+        self.rhs.compile(dst, prog, mem, vt)
+        prog.movsd_mem_xmm("rbp", 8 * mem.index(self.lhs.name), dst)
+
 
 class EqDiff:
     def __init__(self, lhs, rhs):
@@ -202,12 +233,12 @@ class EqDiff:
 
     def __repr__(self):
         return f"δ{self.lhs} = {self.rhs}"
-        
-    def compile(self, prog, mem, vt):
-        self.rhs.compile(prog, mem, vt)
-        prog.movsd_mem_xmm("rbp", 8 * mem.index_diff(self.lhs.name), 0)
-        
-        
+
+    def compile(self, dst, prog, mem, vt):
+        self.rhs.compile(dst, prog, mem, vt)
+        prog.movsd_mem_xmm("rbp", 8 * mem.index_diff(self.lhs.name), dst)
+
+
 class Model:
     def __init__(self, iv, states, params, obs, eqs, odes):
         self.iv = iv
@@ -215,7 +246,7 @@ class Model:
         self.params = params
         self.obs = obs
         self.odes = odes
-        self.eqs = eqs        
+        self.eqs = eqs
 
     def __repr__(self):
         return f"""Model(
@@ -226,22 +257,22 @@ class Model:
             eqs: {self.eqs}
             odes: {self.odes})
         )"""
-        
-    def compile(self, prog, mem, vt):
+
+    def compile(self, dst, prog, mem, vt):
         for eq in self.eqs:
-            eq.compile(prog, mem, vt)
-            
+            eq.compile(dst, prog, mem, vt)
+
         for eq in self.odes:
-            eq.compile(prog, mem, vt)
-            
+            eq.compile(dst, prog, mem, vt)
+
         # note that we generate the prologue after the main body
         # because we need to know the stack size
         prog.begin_prepend()
         self.prologue(prog, mem.stack_size * 8)
         prog.end_prepend()
-        self.epilogue(prog, mem.stack_size * 8)    
-        
-    def prologue(self, prog, n):           
+        self.epilogue(prog, mem.stack_size * 8)
+
+    def prologue(self, prog, n):
         prog.push("rbp")
         prog.push("rbx")
         prog.push("rax")
@@ -249,7 +280,7 @@ class Model:
         prog.mov("rbx", "rsi")  # different than the rust code
         if n > 0:
             prog.sub_rsp(n)
-    
+
     def epilogue(self, prog, n):
         prog.vzeroupper()
         if n > 0:
@@ -258,65 +289,84 @@ class Model:
         prog.pop("rbx")
         prog.pop("rbp")
         prog.ret()
-            
+
 
 def is_pure(op):
-    ops = ["plus", "minus", "times", "division", "square", "cube", "root", "recip",
-        "abs", "neg", "lt", "leq", "gt", "geq", "eq", "neq", "and", "or", "xor"]
+    ops = [
+        "plus",
+        "minus",
+        "times",
+        "division",
+        "square",
+        "cube",
+        "root",
+        "recip",
+        "abs",
+        "neg",
+        "lt",
+        "leq",
+        "gt",
+        "geq",
+        "eq",
+        "neq",
+        "and",
+        "or",
+        "xor",
+    ]
     return op in ops
 
 
 class Memory:
     def __init__(self, model):
         self.names = ["0.0", "1.0", "-1.0", "-0.0"]
-        self.vals = [0.0, 1.0, -1.0, -0.0]        
-        
+        self.vals = [0.0, 1.0, -1.0, -0.0]
+
         self.names.append(model.iv.name)
         self.vals.append(0.0)
-        
+
         self.first_state = len(self.names)
         self.count_states = len(model.states)
-        
+
         for var in model.states:
             self.names.append(var.name)
             self.vals.append(0.0)
-            
+
         self.first_param = len(self.names)
         self.count_params = len(model.params)
-            
+
         for var in model.params:
             self.names.append(var.name)
             self.vals.append(0.0)
-            
+
         self.first_obs = len(self.names)
-        assert(len(model.obs) == len(model.eqs))
+        assert len(model.obs) == len(model.eqs)
         self.count_obs = len(model.obs)
 
         for var in model.obs:
             self.names.append(var.name)
             self.vals.append(0.0)
-            
+
         self.first_diff = len(self.names)
         self.count_diffs = len(model.odes)
 
         for i in range(len(model.odes)):
             self.names.append(f"δ{model.states[i].name}")
-            self.vals.append(0.0)               
-            
+            self.vals.append(0.0)
+
         self.stack_ptr = 0
         self.stack_size = 0
 
     def index(self, name):
         return self.names.index(name)
-        
+
     def index_diff(self, name):
         return self.names.index(f"δ{name}")
-        
+
     def mem(self):
-        return np.asarray(self.vals)            
-        
+        return np.asarray(self.vals)
+
     def constant(self, val):
-        val = float(val)        
+        val = float(val)
         try:
             return self.names.index(str(val))
         except:
@@ -328,13 +378,15 @@ class Memory:
         self.stack_ptr += 1
         self.stack_size = max(self.stack_size, self.stack_ptr)
         return self.stack_ptr - 1
-        
+
     def pop(self):
-        assert(self.stack_ptr > 0)
+        assert self.stack_ptr > 0
         self.stack_ptr -= 1
         return self.stack_ptr
-            
-#******************** Lowering ***********************
+
+
+# ******************** Lowering ***********************
+
 
 def lower(y):
     if y.is_Number or isinstance(y, numbers.Number):
@@ -350,10 +402,11 @@ def lower(y):
     else:
         return lower_tree(y)
 
+
 def lower_tree(y):
     if y.is_Add:
         return lower_add(y)
-    elif y.is_Mul:        
+    elif y.is_Mul:
         return lower_mul(y)
     elif y.is_Pow:
         return lower_pow(y)
@@ -362,10 +415,11 @@ def lower_tree(y):
             return Unary(operation(y.func), lower(y.args[0]))
         elif len(y.args) == 2:
             return Binary(operation(y.func), lower(y.args[0]), lower(y.args[1]))
-    raise ValueError(f"unrecognized expression: {y}")      
+    raise ValueError(f"unrecognized expression: {y}")
+
 
 def lower_add(y):
-    assert(y.is_Add)
+    assert y.is_Add
     if len(y.args) == 1:
         return lower(y.args[0])
     if len(y.args) == 2:
@@ -373,8 +427,9 @@ def lower_add(y):
     else:
         return Binary("plus", lower(y.args[0]), lower(y.func(*y.args[1:])))
 
+
 def lower_mul(y):
-    assert(y.is_Mul)
+    assert y.is_Mul
     if len(y.args) == 2 and y.args[1].is_Pow and y.args[1].args[1] == -1:
         return Binary("divide", lower(y.args[0]), lower(y.args[1].args[0]))
     if len(y.args) == 2:
@@ -382,8 +437,9 @@ def lower_mul(y):
     else:
         return Binary("times", lower(y.args[0]), lower(y.func(*y.args[1:])))
 
+
 def lower_pow(y):
-    assert(y.is_Pow)
+    assert y.is_Pow
     power = y.args[1]
     arg = y.args[0]
 
@@ -404,12 +460,13 @@ def lower_pow(y):
     else:
         return Binary("power", lower(y.args[0]), lower(y.args[1]))
 
+
 def operation(func):
     op = str(func)
     if func == sqrt:
         op = "root"
-    elif func == log: 
-        op = "ln"   # this is confusing but sympy uses `log` for natural logarithm
+    elif func == log:
+        op = "ln"  # this is confusing but sympy uses `log` for natural logarithm
     elif func == Abs:
         op = "abs"
     elif func == asin:
@@ -424,8 +481,9 @@ def operation(func):
         op = "arccosh"
     elif func == atanh:
         op = "arctanh"
-        
+
     return op
+
 
 def relational(y):
     f = y.func
@@ -488,18 +546,17 @@ def model(states, eqs, params=None, obs=None):
 
     if params is None:
         params = []
-        
+
     if obs is None:
         obs = [f"${i}" for i in range(len(eqs))]
-        
+
     model = Model(
-        Var("$_"),                  # iv
-        [Var(x) for x in states],   # states
-        [Var(x) for x in params],   # params
-        [Var(x) for x in obs],      # obs
-        [Eq(Var(lhs), lower(rhs)) for (lhs, rhs) in zip(obs, eqs)], # eqs
-        [],                         # odes
-    )  
+        Var("$_"),  # iv
+        [Var(x) for x in states],  # states
+        [Var(x) for x in params],  # params
+        [Var(x) for x in obs],  # obs
+        [Eq(Var(lhs), lower(rhs)) for (lhs, rhs) in zip(obs, eqs)],  # eqs
+        [],  # odes
+    )
 
     return model
-
