@@ -1,0 +1,14 @@
+# pyproject.toml
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pysymjit"
+version = "1.0.0"
+
+[tool.setuptools.packages]
+# Pure Python packages/modules
+find = { where = ["python"] }
+
+
