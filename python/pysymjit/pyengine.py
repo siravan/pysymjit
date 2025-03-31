@@ -144,61 +144,62 @@ class VirtualTable:
         return self.dict[op]
 
 
-def alloc_function(buf):
-    if sys.platform == "win32":        
-        alloc = ctypes.windll.kernel32.VirtualAlloc
-        alloc.restype = ctypes.c_void_p
-        alloc.argtypes = [
-            ctypes.c_void_p,    # lpAddress
-            ctypes.c_size_t,    # dwSize
-            ctypes.c_uint32,    # flAllocationType
-            ctypes.c_uint32     # flProtect
-        ]
+class Code:
+    alloc = None
+    free = None
+    
+    MEM_COMMIT = 0x00001000
+    MEM_RESERVE = 0x00002000
+    PAGE_EXECUTE_READ = 0x00000020
+    PAGE_EXECUTE_READWRITE = 0x00000040
+    PAGE_READWRITE = 0x00000004
+    MEM_RELEASE = 0x00008000
+    MEM_DECOMMIT = 0x00004000
 
-        MEM_COMMIT = 0x00001000
-        MEM_RESERVE = 0x00002000
-        PAGE_EXECUTE_READ = 0x00000020
-        PAGE_EXECUTE_READWRITE = 0x00000040
-        PAGE_READWRITE = 0x00000004
+    def __init__(self, buf):
+        if sys.platform == "win32":        
+            if Code.alloc is None:
+                Code.alloc = ctypes.windll.kernel32.VirtualAlloc
+                Code.alloc.restype = ctypes.c_void_p
+                Code.alloc.argtypes = [
+                    ctypes.c_void_p,    # lpAddress
+                    ctypes.c_size_t,    # dwSize
+                    ctypes.c_uint32,    # flAllocationType
+                    ctypes.c_uint32     # flProtect
+                ]
+                
+                Code.free = ctypes.windll.kernel32.VirtualFree
+                Code.free.restype = ctypes.c_bool
+                Code.free.argtypes = [
+                    ctypes.c_void_p,    # lpAddress
+                    ctypes.c_size_t,    # dwSize
+                    ctypes.c_uint32,    # dwFreeType            
+                ]
 
-        size = (1 + len(buf) // 4096) * 4096
+            size = (1 + len(buf) // 4096) * 4096
+            self.addr = Code.alloc(
+                None,
+                size,
+                MEM_RESERVE | MEM_COMMIT,
+                PAGE_EXECUTE_READWRITE
+            )
+            buf = bytes(buf)
+            ctypes.memmove(self.addr, buf, len(buf))
+        else:
+            self.code = mmap.mmap(
+                -1,
+                len(buf),
+                prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC,
+                flags=mmap.MAP_ANON | mmap.MAP_PRIVATE,
+            )
+            self.code.write(buf)
+            self.code.flush()
+            self.addr = ctypes.addressof(ctypes.c_long.from_buffer(self.code))
 
-        mem = alloc(
-            None,
-            size,
-            MEM_RESERVE | MEM_COMMIT,
-            PAGE_EXECUTE_READWRITE
-        )
-
-        buf = bytes(buf)
-        ctypes.memmove(mem, buf, len(buf))
-        return mem
-    else:
-        code = mmap.mmap(
-            -1,
-            len(buf),
-            prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC,
-            flags=mmap.MAP_ANON | mmap.MAP_PRIVATE,
-        )
-        code.write(buf)
-        code.flush()
-        return ctypes.addressof(ctypes.c_ulonglong.from_buffer(code))
-
-def free_function(addr):
-    if sys.platform == "win32":
-        free = ctypes.windll.kernel32.VirtualFree
-        free.restype = ctypes.c_bool
-        free.argtypes = [
-            ctypes.c_void_p,    # lpAddress
-            ctypes.c_size_t,    # dwSize
-            ctypes.c_uint32,    # dwFreeType            
-        ]
-
-        MEM_RELEASE = 0x00008000
-        MEM_DECOMMIT = 0x00004000
-        
-        free(addr, 0, MEM_RELEASE)
-    # note: for linux, mmap takes care of releasing memory
+    def __del__(self):
+        if sys.platform == "win32":
+            Code.free(self.addr, 0, MEM_RELEASE)
+            # note: for linux, mmap takes care of releasing memory
 
 
 class PyCompiler:        
@@ -213,10 +214,10 @@ class PyCompiler:
             ctypes.c_size_t,    # restype 
             ctypes.c_size_t,    # address of the heap
             ctypes.c_size_t,    # address of the virtual table
-        )
+        )        
 
-        self.addr = alloc_function(prog.buf)
-        self.func = fac(self.addr)
+        self.code = Code(prog.buf)
+        self.func = fac(self.code.addr)
         self.heap = mem.mem()
         self.table = vt.vt()
         self.heap_ptr = ctypes.addressof(ctypes.c_long.from_buffer(self.heap))
@@ -236,14 +237,15 @@ class PyCompiler:
             ctypes.c_size_t,    # func
         )
 
-        self.vaddr = alloc_function(vprog.buf)
-        self.vfunc = fac(self.vaddr)
+        self.vcode = Code(vprog.buf)
+        self.vfunc = fac(self.vcode.addr)
         self.vprog = vprog         
         self.populate()
 
     def __del__(self):
-        free_function(self.addr)
-        free_function(self.vaddr)           
+        pass
+        # free_function(self.addr)
+        # free_function(self.vaddr)           
 
     def populate(self):
         first_state = self.mem.first_state
@@ -281,6 +283,6 @@ class PyCompiler:
             self.table_ptr,
             ctypes.addressof(ctypes.c_long.from_buffer(buf)),
             ctypes.c_size_t(buf.shape[1]),
-            self.addr,
+            self.code.addr,
         ) 
 
