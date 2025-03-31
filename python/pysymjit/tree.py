@@ -280,29 +280,30 @@ class Model:
 
         # note that we generate the prologue after the main body
         # because we need to know the stack size
-        prog.begin_prepend()
-        self.prologue(prog, mem.stack_size * 8)
+        prog.begin_prepend()        
+        cap = mem.stack_size
+        pad = (cap + 1) & 1
+        n = (cap + pad) * 8
+        self.prologue(prog, n)
         prog.end_prepend()
-        self.epilogue(prog, mem.stack_size * 8)
+        self.epilogue(prog, n)
 
     def prologue(self, prog, n):
         prog.push("rbp")
         prog.push("rbx")
-        prog.push("rax")
+        
         if prog.is_win:
             prog.mov("rbp", "rcx")
             prog.mov("rbx", "rdx")  # different than the rust code        
         else:
             prog.mov("rbp", "rdi")
             prog.mov("rbx", "rsi")  # different than the rust code
-        if n > 0:
-            prog.sub_rsp(n)
+        
+        prog.sub_rsp(n)
 
     def epilogue(self, prog, n):
         prog.vzeroupper()
-        if n > 0:
-            prog.add_rsp(n)
-        prog.pop("rax")
+        prog.add_rsp(n)        
         prog.pop("rbx")
         prog.pop("rbp")
         prog.ret()

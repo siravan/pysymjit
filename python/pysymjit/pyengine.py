@@ -13,6 +13,8 @@ def can_compile():
         return True
     elif sys.platform == "darwin" and platform.machine() == "x86_64":
         return True
+    elif sys.platform == "win32":
+        return True
     else:
         return False
 
@@ -87,8 +89,13 @@ class Memory:
 
 class VirtualTable:
     def __init__(self):
-        path = find_library("m")
-        self.lib = ctypes.CDLL(path)
+        if sys.platform == "win32":
+            self.lib = ctypes.cdll.msvcrt
+            self.is_win = True
+        else:
+            path = find_library("m")
+            self.lib = ctypes.CDLL(path)
+            self.is_win = False
 
         self.addr = []
         self.dict = {}
@@ -106,23 +113,25 @@ class VirtualTable:
         self.cosh = self.unary(self.lib.cosh, "cosh")
         self.tanh = self.unary(self.lib.tanh, "tanh")
 
-        self.asin = self.unary(self.lib.asin, "asin")
+        self.asin = self.unary(self.lib.asin, "asin")   
         self.acos = self.unary(self.lib.acos, "acos")
         self.atan = self.unary(self.lib.atan, "atan")
 
-        self.asinh = self.unary(self.lib.asinh, "asinh")
-        self.acosh = self.unary(self.lib.acosh, "acosh")
-        self.atanh = self.unary(self.lib.atanh, "atanh")
+        # msvcrt does not export inverse hyperbolic functions!
+        if not self.is_win:
+            self.asinh = self.unary(self.lib.asinh, "asinh")    
+            self.acosh = self.unary(self.lib.acosh, "acosh")
+            self.atanh = self.unary(self.lib.atanh, "atanh")
 
     def unary(self, func, name):
-        self.addr.append(ctypes.c_long.from_buffer(func).value)
+        self.addr.append(ctypes.c_ulonglong.from_buffer(func).value)
         self.dict[name] = len(self.addr) - 1
         func.restype = ctypes.c_double
         func.argtypes = [ctypes.c_double]
         return func
 
     def binary(self, func, name):
-        self.addr.append(ctypes.c_long.from_buffer(func).value)
+        self.addr.append(ctypes.c_ulonglong.from_buffer(func).value)
         self.dict[name] = len(self.addr) - 1
         func.restype = ctypes.c_double
         func.argtypes = [ctypes.c_double, ctypes.c_double]
@@ -135,6 +144,63 @@ class VirtualTable:
         return self.dict[op]
 
 
+def alloc_function(buf):
+    if sys.platform == "win32":        
+        alloc = ctypes.windll.kernel32.VirtualAlloc
+        alloc.restype = ctypes.c_void_p
+        alloc.argtypes = [
+            ctypes.c_void_p,    # lpAddress
+            ctypes.c_size_t,    # dwSize
+            ctypes.c_uint32,    # flAllocationType
+            ctypes.c_uint32     # flProtect
+        ]
+
+        MEM_COMMIT = 0x00001000
+        MEM_RESERVE = 0x00002000
+        PAGE_EXECUTE_READ = 0x00000020
+        PAGE_EXECUTE_READWRITE = 0x00000040
+        PAGE_READWRITE = 0x00000004
+
+        size = (1 + len(buf) // 4096) * 4096
+
+        mem = alloc(
+            None,
+            size,
+            MEM_RESERVE | MEM_COMMIT,
+            PAGE_EXECUTE_READWRITE
+        )
+
+        buf = bytes(buf)
+        ctypes.memmove(mem, buf, len(buf))
+        return mem
+    else:
+        code = mmap.mmap(
+            -1,
+            len(buf),
+            prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC,
+            flags=mmap.MAP_ANON | mmap.MAP_PRIVATE,
+        )
+        code.write(buf)
+        code.flush()
+        return ctypes.addressof(ctypes.c_ulonglong.from_buffer(code))
+
+def free_function(addr):
+    if sys.platform == "win32":
+        free = ctypes.windll.kernel32.VirtualFree
+        free.restype = ctypes.c_bool
+        free.argtypes = [
+            ctypes.c_void_p,    # lpAddress
+            ctypes.c_size_t,    # dwSize
+            ctypes.c_uint32,    # dwFreeType            
+        ]
+
+        MEM_RELEASE = 0x00008000
+        MEM_DECOMMIT = 0x00004000
+        
+        free(addr, 0, MEM_RELEASE)
+    # note: for linux, mmap takes care of releasing memory
+
+
 class PyCompiler:        
     def __init__(self, model):
         mem = Memory(model)
@@ -143,22 +209,13 @@ class PyCompiler:
         prog = amd.Amd()
         model.compile(0, prog, mem, vt)
 
-        self.code = mmap.mmap(
-            -1,
-            len(prog.buf),
-            prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC,
-            flags=mmap.MAP_ANON | mmap.MAP_PRIVATE,
-        )
-        self.code.write(prog.buf)
-        self.code.flush()
-
         fac = ctypes.CFUNCTYPE(
             ctypes.c_size_t,    # restype 
             ctypes.c_size_t,    # address of the heap
             ctypes.c_size_t,    # address of the virtual table
         )
 
-        self.addr = ctypes.addressof(ctypes.c_long.from_buffer(self.code))
+        self.addr = alloc_function(prog.buf)
         self.func = fac(self.addr)
         self.heap = mem.mem()
         self.table = vt.vt()
@@ -170,15 +227,6 @@ class PyCompiler:
         vprog = amd.Amd()
         vec = vectorizer.vectorize_func(vprog, mem)
 
-        self.vcode = mmap.mmap(
-            -1,
-            len(vprog.buf),
-            prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC,
-            flags=mmap.MAP_ANON | mmap.MAP_PRIVATE,
-        )
-        self.vcode.write(vprog.buf)
-        self.vcode.flush()
-
         fac = ctypes.CFUNCTYPE(
             ctypes.c_size_t,
             ctypes.c_size_t,    # address of the heap
@@ -188,9 +236,14 @@ class PyCompiler:
             ctypes.c_size_t,    # func
         )
 
-        self.vfunc = fac(ctypes.addressof(ctypes.c_long.from_buffer(self.vcode)))
+        self.vaddr = alloc_function(vprog.buf)
+        self.vfunc = fac(self.vaddr)
         self.vprog = vprog         
-        self.populate()           
+        self.populate()
+
+    def __del__(self):
+        free_function(self.addr)
+        free_function(self.vaddr)           
 
     def populate(self):
         first_state = self.mem.first_state
