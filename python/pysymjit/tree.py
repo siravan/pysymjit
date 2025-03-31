@@ -62,10 +62,17 @@ class Unary:
             raise ValueError(f"unary op {self.op} not defined")
 
     def call(self, dst, prog, idx):
+        # Windows 32-byte home area
+        if prog.is_win:
+            prog.sub_rsp(32)
+            
         prog.mov_reg_mem("rax", "rbx", 8 * idx)
         prog.call("rax")
         if dst != 0:
             prog.movapd(dst, 0)
+            
+        if prog.is_win:
+            prog.add_rsp(32)            
 
 
 class Binary:
@@ -130,10 +137,17 @@ class Binary:
             raise ValueError(f"binary op {self.op} not defined")
 
     def call(self, dst, prog, idx):
+        # Windows 32-byte home area
+        if prog.is_win:
+            prog.sub_rsp(32)
+            
         prog.mov_reg_mem("rax", "rbx", 8 * idx)
         prog.call("rax")
         if dst != 0:
             prog.movapd(dst, 0)
+            
+        if prog.is_win:
+            prog.add_rsp(32)            
 
 
 class IfElse:
@@ -275,8 +289,12 @@ class Model:
         prog.push("rbp")
         prog.push("rbx")
         prog.push("rax")
-        prog.mov("rbp", "rdi")
-        prog.mov("rbx", "rsi")  # different than the rust code
+        if prog.is_win:
+            prog.mov("rbp", "rcx")
+            prog.mov("rbx", "rdx")  # different than the rust code        
+        else:
+            prog.mov("rbp", "rdi")
+            prog.mov("rbx", "rsi")  # different than the rust code
         if n > 0:
             prog.sub_rsp(n)
 

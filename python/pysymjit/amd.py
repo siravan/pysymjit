@@ -1,3 +1,5 @@
+import sys
+
 def reg_index(reg):
     if isinstance(reg, int):
         return reg
@@ -44,6 +46,7 @@ class Amd:
         self.tail = None
         self.labels = {}
         self.jumps = []
+        self.is_win = (sys.platform == "win32")
 
     def append(self, *b):
         self.buf.extend(b)

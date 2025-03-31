@@ -14,14 +14,24 @@ def vectorize_func(prog, mem):
     prog.push("r13")  #
     prog.push("r14")  # func
     prog.push("r15")  #
-    prog.push("rcx")  #
+    prog.push("rcx")  # stack padding to keep alignment at 16
     
-    prog.mov("rbp", "rdi")  # heap
-    prog.mov("rbx", "rsi")  # table
-    prog.mov("r12", "rdx")  # buf (third argument)
-    prog.mov("r13", "rcx")  # n (fourth argument)
-    prog.mov("r15", "rcx")
-    prog.mov("r14", "r8")   # func
+    if prog.is_win:
+        prog.mov("rbp", "rcx")  # heap
+        prog.mov("rbx", "rdx")  # table
+        prog.mov("r12", "r8")   # buf (third argument)
+        prog.mov("r13", "r9")   # n (fourth argument)
+        # the fifth parameter is passed on the stack in Windows
+        # the offset is calculated by 7 pushes, 1 return addr, and 4 for the homes
+        prog.mov_reg_mem("r14", "rsp", 8*(7 + 1 + 4))   # func                                         
+    else:
+        prog.mov("rbp", "rdi")  # heap
+        prog.mov("rbx", "rsi")  # table
+        prog.mov("r12", "rdx")  # buf (third argument)
+        prog.mov("r13", "rcx")  # n (fourth argument)
+        prog.mov("r14", "r8")   # func
+
+    prog.mov("r15", "r13")      # r15 is the loop counter
 
     # r13 := 8 * n
     prog.add("r13", "r13")
@@ -37,8 +47,16 @@ def vectorize_func(prog, mem):
         prog.movsd_mem_xmm("rbp", 8 * i, 0)
         prog.add("rdi", "r13")
 
-    prog.mov("rdi", "rbp")
-    prog.mov("rsi", "rbx")
+    if prog.is_win:
+        prog.mov("rcx", "rbp")
+        prog.mov("rdx", "rbx")
+    else:
+        prog.mov("rdi", "rbp")
+        prog.mov("rsi", "rbx")
+        
+    # Technically we need to subtract 32 from rsp in Windows
+    # However, we know that func here does not use the home area 
+    
     prog.call("r14")
 
     prog.mov("rdi", "r12")
