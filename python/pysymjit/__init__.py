@@ -1,8 +1,7 @@
 import numpy as np
 import numbers
 
-from . import tree
-from . import pyengine
+import pyengine
    
 ############################################################################
      
@@ -98,7 +97,7 @@ class JacFunc:
 
 def compile_func(states, eqs, params=None, obs=None, ty="native", use_simd=True):
     if pyengine.can_compile():
-        model = tree.model(states, eqs, params, obs)
+        model = pyengine.tree.model(states, eqs, params, obs)
         compiler = pyengine.PyCompiler(model)
         return Func(compiler)
     else:
@@ -107,7 +106,7 @@ def compile_func(states, eqs, params=None, obs=None, ty="native", use_simd=True)
 
 def compile_ode(iv, states, odes, params=None, ty="native", use_simd=False):
     if pyengine.can_compile():
-        model = tree.model_ode(iv, states, odes, params)
+        model = pyengine.tree.model_ode(iv, states, odes, params)
         compiler = pyengine.PyCompiler(model)
         return OdeFunc(compiler)
     else:
@@ -115,7 +114,7 @@ def compile_ode(iv, states, odes, params=None, ty="native", use_simd=False):
     
 def compile_jac(iv, states, odes, params=None, ty="native", use_simd=False):
     if pyengine.can_compile():
-        model = tree.model_jac(iv, states, odes, params)
+        model = pyengine.tree.model_jac(iv, states, odes, params)
         compiler = pyengine.PyCompiler(model)
         return JacFunc(compiler)
     else:

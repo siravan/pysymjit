@@ -7,6 +7,7 @@ import platform
 
 from . import amd
 from . import vectorizer
+from . import tree
 
 def can_compile():
     if sys.platform == "linux" and platform.machine() == "x86_64":
