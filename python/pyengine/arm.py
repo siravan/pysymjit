@@ -326,7 +326,7 @@ class ArmIR:
         
     def stack_size(self):
         cap = self.mem.stack_size
-        pad = (cap + 1) & 1
+        pad = cap & 1
         return (cap + pad) * 8
         
     def prepend_prologue(self):

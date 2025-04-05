@@ -95,7 +95,7 @@ class JacFunc:
         self.compiler.dump(name, what=what)        
 
 
-def compile_func(states, eqs, params=None, obs=None, ty="native", use_simd=True):
+def compile_func(states, eqs, params=None, obs=None, ty="arm", use_simd=True):
     if pyengine.can_compile():
         model = pyengine.tree.model(states, eqs, params, obs)
         compiler = pyengine.PyCompiler(model, ty=ty)

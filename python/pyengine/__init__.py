@@ -190,15 +190,34 @@ class Code:
             buf = bytes(buf)
             ctypes.memmove(self.addr, buf, len(buf))
         else:
+            path = find_library('c')
+            libc = ctypes.CDLL(path)
+            # print(libc.pthread_jit_write_protect_np(1))
+
             self.code = mmap.mmap(
                 -1,
                 len(buf),
-                prot=mmap.PROT_READ | mmap.PROT_WRITE | mmap.PROT_EXEC,
-                flags=mmap.MAP_ANON | mmap.MAP_PRIVATE,
+                prot=mmap.PROT_READ | mmap.PROT_WRITE,
+                flags=mmap.MAP_ANON | mmap.MAP_PRIVATE | mmap.MAP_JIT,
             )
+
             self.code.write(buf)
             self.code.flush()
+
             self.addr = ctypes.addressof(ctypes.c_long.from_buffer(self.code))
+            
+
+            icache_invalidate = libc.sys_icache_invalidate
+            icache_invalidate.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+            icache_invalidate.restype = ctypes.c_int
+            res = icache_invalidate(self.addr, 4096)
+            # print('icache: ', res)
+
+            mprotect = ctypes.pythonapi.mprotect
+            mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+            mprotect.restype = ctypes.c_int
+            mprotect(self.addr, len(buf), mmap.PROT_READ | mmap.PROT_EXEC)
+            
 
     def __del__(self):
         if sys.platform == "win32":
