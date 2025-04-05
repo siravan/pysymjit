@@ -98,7 +98,7 @@ class JacFunc:
 def compile_func(states, eqs, params=None, obs=None, ty="native", use_simd=True):
     if pyengine.can_compile():
         model = pyengine.tree.model(states, eqs, params, obs)
-        compiler = pyengine.PyCompiler(model)
+        compiler = pyengine.PyCompiler(model, ty=ty)
         return Func(compiler)
     else:
         raise ValueError("unsupported platform")

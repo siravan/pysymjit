@@ -1,5 +1,8 @@
-from sympy import *
+import sys
 import numbers
+from sympy import *
+
+COUNT_TEMP_XMM = 3 if sys.platform == "win32" else 13
 
 
 class Unary:
@@ -15,64 +18,47 @@ class Unary:
         self.arg.compile(0, prog, mem, vt)
 
         if self.op == "neg":
-            prog.movsd_xmm_mem(1, "rbp", 8 * mem.constant(-0.0))
-            prog.vxorpd(dst, 0, 1)
+            prog.neg(dst)
         elif self.op == "abs":
-            prog.movsd_xmm_mem(1, "rbp", 8 * mem.constant(-0.0))
-            prog.vandnpd(dst, 1, 0)
+            prog.abs(dst)
         elif self.op == "root":
-            prog.vsqrtsd(dst, 0)
+            prog.root(dst)
         elif self.op == "square":
-            prog.vmulsd(dst, 0, 0)
+            prog.square(dst)
         elif self.op == "cube":
-            prog.vmulsd(1, 0, 0)
-            prog.vmulsd(dst, 0, 1)
+            prog.cube(dst)
         elif self.op == "recip":
-            prog.movsd_xmm_mem(1, "rbp", 8 * mem.constant(1.0))
-            prog.vdivsd(dst, 1, 0)
+            prog.recip(dst)
         elif self.op == "exp":
-            self.call(dst, prog, vt.find("exp"))
+            prog.call_unary(dst, vt.find("exp"))
         elif self.op == "ln":
-            self.call(dst, prog, vt.find("log"))
+            prog.call_unary(dst, vt.find("log"))
         elif self.op == "sin":
-            self.call(dst, prog, vt.find("sin"))
+            prog.call_unary(dst, vt.find("sin"))
         elif self.op == "cos":
-            self.call(dst, prog, vt.find("cos"))
+            prog.call_unary(dst, vt.find("cos"))
         elif self.op == "tan":
-            self.call(dst, prog, vt.find("tan"))
+            prog.call_unary(dst, vt.find("tan"))
         elif self.op == "sinh":
-            self.call(dst, prog, vt.find("sinh"))
+            prog.call_unary(dst, vt.find("sinh"))
         elif self.op == "cosh":
-            self.call(dst, prog, vt.find("cosh"))
+            prog.call_unary(dst, vt.find("cosh"))
         elif self.op == "tanh":
-            self.call(dst, prog, vt.find("tanh"))
+            prog.call_unary(dst, vt.find("tanh"))
         elif self.op == "arcsin":
-            self.call(dst, prog, vt.find("asin"))
+            prog.call_unary(dst, vt.find("asin"))
         elif self.op == "arccos":
-            self.call(dst, prog, vt.find("acos"))
+            prog.call_unary(dst, vt.find("acos"))
         elif self.op == "arctan":
-            self.call(dst, prog, vt.find("atan"))
+            prog.call_unary(dst, vt.find("atan"))
         elif self.op == "arcsinh":
-            self.call(dst, prog, vt.find("asinh"))
+            prog.call_unary(dst, vt.find("asinh"))
         elif self.op == "arccosh":
-            self.call(dst, prog, vt.find("acosh"))
+            prog.call_unary(dst, vt.find("acosh"))
         elif self.op == "arctanh":
-            self.call(dst, prog, vt.find("atanh"))
+            prog.call_unary(dst, vt.find("atanh"))
         else:
             raise ValueError(f"unary op {self.op} not defined")
-
-    def call(self, dst, prog, idx):
-        # Windows 32-byte home area
-        if prog.is_win:
-            prog.sub_rsp(32)
-            
-        prog.mov_reg_mem("rax", "rbx", 8 * idx)
-        prog.call("rax")
-        if dst != 0:
-            prog.movapd(dst, 0)
-            
-        if prog.is_win:
-            prog.add_rsp(32)            
 
 
 class Binary:
@@ -87,67 +73,53 @@ class Binary:
 
     def compile(self, dst, prog, mem, vt):
         sp = mem.push()
-        use_reg = sp < 3 and self.left.is_pure
+        use_reg = sp < prog.count_shadows and self.left.is_pure
 
         if use_reg:
-            self.right.compile(3 + sp, prog, mem, vt)
+            self.right.compile(prog.first_shadow + sp, prog, mem, vt)
         else:
             self.right.compile(0, prog, mem, vt)
-            prog.movsd_mem_xmm("rsp", 8 * sp, 0)
+            prog.save_stack(0, sp)
 
         self.left.compile(0, prog, mem, vt)
         sp = mem.pop()
 
         if use_reg:
-            r = 3 + sp
+            r = prog.first_shadow + sp
         else:
-            prog.movsd_xmm_mem(1, "rsp", 8 * sp)
+            prog.load_stack(1, sp)
             r = 1
 
         if self.op == "plus":
-            prog.vaddsd(dst, 0, r)
+            prog.plus(dst, r)
         elif self.op == "minus":
-            prog.vsubsd(dst, 0, r)
+            prog.minus(dst, r)
         elif self.op == "times":
-            prog.vmulsd(dst, 0, r)
+            prog.times(dst, r)
         elif self.op == "divide":
-            prog.vdivsd(dst, 0, r)
+            prog.divide(dst, r)
         elif self.op == "power":
-            prog.movapd(1, r)
-            self.call(dst, prog, vt.find("pow"))
+            prog.call_binary(dst, r, vt.find("pow"))
         elif self.op == "gt":
-            prog.vcmpnlesd(dst, 0, r)
+            prog.gt(dst, r)
         elif self.op == "geq":
-            prog.vcmpnltsd(dst, 0, r)
+            prog.geq(dst, r)
         elif self.op == "lt":
-            prog.vcmpltsd(dst, 0, r)
+            prog.lt(dst, r)
         elif self.op == "leq":
-            prog.vcmplesd(dst, 0, r)
+            prog.leq(dst, r)
         elif self.op == "eq":
-            prog.vcmpeqsd(dst, 0, r)
+            prog.eq(dst, r)
         elif self.op == "neq":
-            prog.vcmpneqsd(dst, 0, r)
+            prog.neq(dst, r)
         elif self.op == "and":
-            prog.vandpd(dst, 0, r)
+            prog.boolean_and(dst, r)
         elif self.op == "or":
-            prog.vorpd(dst, 0, r)
+            prog.boolean_or(dst, r)
         elif self.op == "xor":
-            prog.vxorpd(dst, 0, r)
+            prog.boolean_xor(dst, r)
         else:
             raise ValueError(f"binary op {self.op} not defined")
-
-    def call(self, dst, prog, idx):
-        # Windows 32-byte home area
-        if prog.is_win:
-            prog.sub_rsp(32)
-            
-        prog.mov_reg_mem("rax", "rbx", 8 * idx)
-        prog.call("rax")
-        if dst != 0:
-            prog.movapd(dst, 0)
-            
-        if prog.is_win:
-            prog.add_rsp(32)            
 
 
 class IfElse:
@@ -162,31 +134,31 @@ class IfElse:
 
     def compile(self, dst, prog, mem, vt):
         sp = mem.push()
-        use_reg_cond = sp < 3 and self.true_val.is_pure and self.false_val.is_pure
+        use_reg_cond = sp < prog.count_shadows and self.true_val.is_pure and self.false_val.is_pure
 
         if use_reg_cond:
-            self.cond.compile(3 + sp, prog, mem, vt)
+            self.cond.compile(prog.first_shadow + sp, prog, mem, vt)
         else:
             self.cond.compile(0, prog, mem, vt)
-            prog.movsd_mem_xmm("rsp", 8 * sp, 0)
+            prog.save_stack(0, sp)
 
         sp = mem.push()
-        use_reg_false = sp < 3 and self.true_val.is_pure
+        use_reg_false = sp < COUNT_TEMP_XMM and self.true_val.is_pure
 
         if use_reg_false:
-            self.false_val.compile(3 + sp, prog, mem, vt)
+            self.false_val.compile(prog.first_shadow + sp, prog, mem, vt)
         else:
             self.false_val.compile(0, prog, mem, vt)
-            prog.movsd_mem_xmm("rsp", 8 * sp, 0)
+            prog.save_stack(0, sp)
 
         self.true_val.compile(0, prog, mem, vt)
 
         sp = mem.pop()
 
         if use_reg_false:
-            f = 3 + sp
+            f = prog.first_shadow + sp
         else:
-            prog.movsd_xmm_mem(1, "rsp", 8 * sp)
+            prog.load_stack(1, sp)
             f = 1
 
         sp = mem.pop()
@@ -194,12 +166,10 @@ class IfElse:
         if use_reg_cond:
             c = 3 + sp
         else:
-            prog.movsd_xmm_mem(2, "rsp", 8 * sp)
+            prog.load_stack(2, sp)
             c = 2
-
-        prog.vandpd(0, 0, c)
-        prog.vandnpd(c, c, f)
-        prog.vorpd(dst, 0, c)
+            
+        prog.ifelse(dst, c, 0, f)
 
 
 class Const:
@@ -211,7 +181,7 @@ class Const:
         return f"Const({self.val})"
 
     def compile(self, dst, prog, mem, vt):
-        prog.movsd_xmm_mem(dst, "rbp", 8 * mem.constant(self.val))
+        prog.load_mem(dst, mem.constant(self.val))
 
 
 class Var:
@@ -223,7 +193,7 @@ class Var:
         return f"Var('{self.name}')"
 
     def compile(self, dst, prog, mem, vt):
-        prog.movsd_xmm_mem(dst, "rbp", 8 * mem.index(self.name))
+        prog.load_mem(dst, mem.index(self.name))
 
 
 class Eq:
@@ -236,7 +206,7 @@ class Eq:
 
     def compile(self, dst, prog, mem, vt):
         self.rhs.compile(dst, prog, mem, vt)
-        prog.movsd_mem_xmm("rbp", 8 * mem.index(self.lhs.name), dst)
+        prog.save_mem(dst, mem.index(self.lhs.name))
 
 
 class EqDiff:
@@ -249,7 +219,7 @@ class EqDiff:
 
     def compile(self, dst, prog, mem, vt):
         self.rhs.compile(dst, prog, mem, vt)
-        prog.movsd_mem_xmm("rbp", 8 * mem.index_diff(self.lhs.name), dst)
+        prog.save_mem(dst, mem.index_diff(self.lhs.name))
 
 
 class Model:
@@ -278,35 +248,11 @@ class Model:
         for eq in self.odes:
             eq.compile(dst, prog, mem, vt)
 
-        # note that we generate the prologue after the main body
-        # because we need to know the stack size
-        prog.begin_prepend()        
-        cap = mem.stack_size
-        pad = (cap + 1) & 1
-        n = (cap + pad) * 8
-        self.prologue(prog, n)
-        prog.end_prepend()
-        self.epilogue(prog, n)
-
-    def prologue(self, prog, n):
-        prog.push("rbp")
-        prog.push("rbx")
-        
-        if prog.is_win:
-            prog.mov("rbp", "rcx")
-            prog.mov("rbx", "rdx")  # different than the rust code        
-        else:
-            prog.mov("rbp", "rdi")
-            prog.mov("rbx", "rsi")  # different than the rust code
-        
-        prog.sub_rsp(n)
-
-    def epilogue(self, prog, n):
-        prog.vzeroupper()
-        prog.add_rsp(n)        
-        prog.pop("rbx")
-        prog.pop("rbp")
-        prog.ret()
+        # we need to prepend and not append prologue 
+        # because we don't know the stack size until
+        # after compiling the body of the function
+        prog.prepend_prologue() 
+        prog.append_epilogue()
 
 
 def is_pure(op):

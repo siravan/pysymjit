@@ -6,10 +6,13 @@ import numpy as np
 import platform
 
 from . import amd
+from . import arm
 from . import vectorizer
 from . import tree
 
 def can_compile():
+    return True
+
     if sys.platform == "linux" and platform.machine() == "x86_64":
         return True
     elif sys.platform == "darwin" and platform.machine() == "x86_64":
@@ -204,11 +207,15 @@ class Code:
 
 
 class PyCompiler:        
-    def __init__(self, model):
+    def __init__(self, model, ty="native"):
         mem = Memory(model)
         vt = VirtualTable()
 
-        prog = amd.Amd()
+        if ty == "arm":
+            prog = arm.ArmIR(mem)
+        else:
+            prog = amd.AmdIR(mem)
+            
         model.compile(0, prog, mem, vt)
 
         fac = ctypes.CFUNCTYPE(
@@ -217,7 +224,7 @@ class PyCompiler:
             ctypes.c_size_t,    # address of the virtual table
         )        
 
-        self.code = Code(prog.buf)
+        self.code = Code(prog.buf())
         self.func = fac(self.code.addr)
         self.heap = mem.mem()
         self.table = vt.vt()
@@ -266,7 +273,7 @@ class PyCompiler:
         
     def dump(self, name, what="scalar"):
         if what == "scalar":
-            buf = self.prog.buf
+            buf = self.prog.buf()
         elif what == "vectorized":
             buf = self.vprog.buf
         else:

@@ -1,5 +1,7 @@
 import sys
 
+from . import assembler
+
 def reg_index(reg):
     if isinstance(reg, int):
         return reg
@@ -40,73 +42,20 @@ def reg_index(reg):
         raise Error("unregnized register")
 
 
-class Amd:
+class Amd(assembler.Assembler):
     def __init__(self):
-        self.buf = bytearray()
-        self.tail = None
-        self.labels = {}
-        self.jumps = []
+        super().__init__()
         self.is_win = (sys.platform == "win32")
-
-    def append(self, *b):
-        self.buf.extend(b)
-
-    def append_u32(self, u):
-        """appends u as little-endian"""
-        self.append(u & 0xFF)
-        self.append((u >> 8) & 0xFF)
-        self.append((u >> 16) & 0xFF)
-        self.append((u >> 24) & 0xFF)
-
-    def begin_prepend(self):
-        assert self.tail is None
-        self.tail = self.buf
-        self.buf = bytearray()
-
-    def end_prepend(self):
-        assert self.tail is not None
-        shift = len(self.buf)
-        self.buf.extend(self.tail)
-        self.tail = None
-        # note: prologue cannot have jumps
-        jumps = []
-        for label, k in self.jumps:
-            jumps.append((label, k + shift))
-        self.jumps = jumps
-
-    def set_label(self, label):
-        self.labels[label] = len(self.buf)
-
-    def jump(self, label):
-        self.jumps.append((label, len(self.buf)))
-        self.append_u32(0)
-
-    def apply_jumps(self):
-        for label, k in self.jumps:
-            target = self.labels[label]
-            offset = target - (k + 4)
-            self.buf[k] = offset & 0xFF
-            self.buf[k + 1] = (offset >> 8) & 0xFF
-            self.buf[k + 2] = (offset >> 16) & 0xFF
-            self.buf[k + 3] = (offset >> 24) & 0xFF
-
-    def test(self, b):
-        if self.buf == bytes(b):
-            print(f"pass: {b}")
-            self.buf.clear()
-            return True
-        else:
-            return False
 
     def modrm_reg(self, reg, rm):
         reg = reg_index(reg)
         rm = reg_index(rm)
-        self.append(0xC0 + ((reg & 7) << 3) + (rm & 7))
+        self.append_byte(0xC0 + ((reg & 7) << 3) + (rm & 7))
 
     def rex(self, reg, rm):
         reg = reg_index(reg)
         rm = reg_index(rm)
-        self.append(0x48 + ((rm & 8) >> 3) + ((reg & 8) >> 1))
+        self.append_byte(0x48 + ((rm & 8) >> 3) + ((reg & 8) >> 1))
 
     def modrm_mem(self, reg, rm, offset):
         assert offset >= 0
@@ -114,277 +63,456 @@ class Amd:
         rm = reg_index(rm)
 
         if offset < 128:
-            self.append(0x40 + ((reg & 7) << 3) + (rm & 7))
+            self.append_byte(0x40 + ((reg & 7) << 3) + (rm & 7))
         else:
-            self.append(0x80 + ((reg & 7) << 3) + (rm & 7))
+            self.append_byte(0x80 + ((reg & 7) << 3) + (rm & 7))
 
         if rm == 4:
-            self.append(0x24)  # SIB byte for RSP
+            self.append_byte(0x24)  # SIB byte for RSP
 
         if offset < 128:
-            self.append(offset)
+            self.append_byte(offset)
         else:
-            self.append_u32(offset)
+            self.append_word(offset)
 
     def vex2pd(self, reg, vreg):
         """This is the two-byte VEX prefix (VEX2) for packed-double (pd)
         and 256-bit ymm registers"""
         r = (reg & 8) << 4
         vvvv = vreg << 3
-        self.append(0xC5)
-        self.append((r | vvvv | 5) ^ 0xF8)
+        self.append_byte(0xC5)
+        self.append_byte((r | vvvv | 5) ^ 0xF8)
 
     def vex2sd(self, reg, vreg):
         """This is the two-byte VEX prefix (VEX2) for packed-double (pd)
         and 256-bit ymm registers"""
         r = (reg & 8) << 4
         vvvv = vreg << 3
-        self.append(0xC5)
-        self.append((r | vvvv | 3) ^ 0xF8)
+        self.append_byte(0xC5)
+        self.append_byte((r | vvvv | 3) ^ 0xF8)
 
-    def vex3pd(self, reg, vreg, rm, encoding):
+    def vex3pd(self, reg, vreg, rm, encoding = 1):
         """This is the three-byte VEX prefix (VEX3) for packed-double (pd)
         and 256-bit ymm registers"""
         r = (reg & 8) << 4
         b = (rm & 8) << 2
         vvvv = vreg << 3
-        self.append(0xC4)
-        self.append((r | b | encoding) ^ 0xE0)
-        self.append((vvvv | 5) ^ 0x78)
+        self.append_byte(0xC4)
+        self.append_byte((r | b | encoding) ^ 0xE0)
+        self.append_byte((vvvv | 5) ^ 0x78)
+        
+    def vex3sd(self, reg, vreg, rm, encoding = 1):
+        """This is the three-byte VEX prefix (VEX3) for packed-double (pd)
+        and 256-bit ymm registers"""
+        r = (reg & 8) << 4
+        b = (rm & 8) << 2
+        vvvv = vreg << 3
+        self.append_byte(0xC4)
+        self.append_byte((r | b | encoding) ^ 0xE0)
+        self.append_byte((vvvv | 3) ^ 0x78)    
+        
+    def vex_sd(self, reg, vreg, rm):
+        rm = reg_index(rm)
+        if rm < 8:
+            self.vex2sd(reg, vreg)
+        else:
+            self.vex3sd(reg, vreg, rm)
+
+    def vex_pd(self, reg, vreg, rm):
+        rm = reg_index(rm)
+        if rm < 8:
+            self.vex2pd(reg, vreg)
+        else:
+            self.vex3pd(reg, vreg, rm)
 
     # AVX rules!
     def movapd(self, reg, rm):
-        self.vex2pd(reg, 0)
-        self.append(0x28)
+        self.vex_pd(reg, 0, rm)
+        self.append_byte(0x28)
         self.modrm_reg(reg, rm)
         return self
 
     def movsd_xmm_mem(self, reg, rm, offset):
-        self.vex2sd(reg, 0)
-        self.append(0x10)
+        self.vex_sd(reg, 0, rm)
+        self.append_byte(0x10)
         self.modrm_mem(reg, rm, offset)
         return self
 
     def movsd_mem_xmm(self, rm, offset, reg):
-        self.vex2sd(reg, 0)
-        self.append(0x11)
+        self.vex_sd(reg, 0, rm)
+        self.append_byte(0x11)
         self.modrm_mem(reg, rm, offset)
         return self
 
     def vbroadcastsd(self, reg, rm, offset):
         self.vex3pd(reg, 0, rm, 2)
-        self.append(0x19)
+        self.append_byte(0x19)
         self.modrm_mem(reg, rm, offset)
         return self
 
     def vaddsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0x58)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0x58)
         self.modrm_reg(reg, rm)
         return self
 
     def vsubsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0x5C)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0x5C)
         self.modrm_reg(reg, rm)
         return self
 
     def vmulsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0x59)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0x59)
         self.modrm_reg(reg, rm)
         return self
 
     def vdivsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0x5E)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0x5E)
         self.modrm_reg(reg, rm)
         return self
 
     def vsqrtsd(self, reg, rm):
-        self.vex2sd(reg, 0)
-        self.append(0x51)
+        self.vex_sd(reg, 0, rm)
+        self.append_byte(0x51)
         self.modrm_reg(reg, rm)
         return self
 
     def vandpd(self, reg, vreg, rm):
-        self.vex2pd(reg, vreg)
-        self.append(0x54)
+        self.vex_pd(reg, vreg, rm)
+        self.append_byte(0x54)
         self.modrm_reg(reg, rm)
         return self
 
     def vandnpd(self, reg, vreg, rm):
-        self.vex2pd(reg, vreg)
-        self.append(0x55)
+        self.vex_pd(reg, vreg, rm)
+        self.append_byte(0x55)
         self.modrm_reg(reg, rm)
         return self
 
     def vorpd(self, reg, vreg, rm):
-        self.vex2pd(reg, vreg)
-        self.append(0x56)
+        self.vex_pd(reg, vreg, rm)
+        self.append_byte(0x56)
         self.modrm_reg(reg, rm)
         return self
 
     def vxorpd(self, reg, vreg, rm):
-        self.vex2pd(reg, vreg)
-        self.append(0x57)
+        self.vex_pd(reg, vreg, rm)
+        self.append_byte(0x57)
         self.modrm_reg(reg, rm)
         return self
 
     def vcmpeqsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0xC2)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0xC2)
         self.modrm_reg(reg, rm)
-        self.append(0)
+        self.append_byte(0)
         return self
 
     def vcmpltsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0xC2)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0xC2)
         self.modrm_reg(reg, rm)
-        self.append(1)
+        self.append_byte(1)
         return self
 
     def vcmplesd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0xC2)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0xC2)
         self.modrm_reg(reg, rm)
-        self.append(2)
+        self.append_byte(2)
         return self
 
     def vcmpunordsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0xC2)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0xC2)
         self.modrm_reg(reg, rm)
-        self.append(3)
+        self.append_byte(3)
         return self
 
     def vcmpneqsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0xC2)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0xC2)
         self.modrm_reg(reg, rm)
-        self.append(4)
+        self.append_byte(4)
         return self
 
     def vcmpnltsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0xC2)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0xC2)
         self.modrm_reg(reg, rm)
-        self.append(5)
+        self.append_byte(5)
         return self
 
     def vcmpnlesd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0xC2)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0xC2)
         self.modrm_reg(reg, rm)
-        self.append(6)
+        self.append_byte(6)
         return self
 
     def vcmpordsd(self, reg, vreg, rm):
-        self.vex2sd(reg, vreg)
-        self.append(0xC2)
+        self.vex_sd(reg, vreg, rm)
+        self.append_byte(0xC2)
         self.modrm_reg(reg, rm)
-        self.append(7)
+        self.append_byte(7)
         return self
 
     def vzeroupper(self):
-        self.append(0xC5, 0xF8, 0x77)
+        self.append_byte(0xC5, 0xF8, 0x77)
         return self
 
     # general registers
     def mov(self, reg, rm):
         self.rex(reg, rm)
-        self.append(0x8B)
+        self.append_byte(0x8B)
         self.modrm_reg(reg, rm)
         return self
 
     def mov_reg_mem(self, reg, rm, offset):
         self.rex(reg, rm)
-        self.append(0x8B)
+        self.append_byte(0x8B)
         self.modrm_mem(reg, rm, offset)
         return self
 
     def mov_mem_reg(self, rm, offset, reg):
         self.rex(reg, rm)
-        self.append(0x89)
+        self.append_byte(0x89)
         self.modrm_mem(reg, rm, offset)
         return self
 
     def movabs(self, rm, imm64):
         self.rex(0, rm)
-        self.append(0xB8 + (reg_index(rm) & 7))
-        self.append_u32(imm64)
-        self.append_u32(imm64 >> 32)
+        self.append_byte(0xB8 + (reg_index(rm) & 7))
+        self.append_word(imm64)
+        self.append_word(imm64 >> 32)
         return self
 
     def call(self, reg):
         reg = reg_index(reg)
         if reg < 8:
-            self.append(0xFF, 0xD0 | reg)
+            self.append_byte(0xFF, 0xD0 | reg)
         else:
-            self.append(0x41, 0xFF, 0xD0 | (reg & 7))
+            self.append_byte(0x41, 0xFF, 0xD0 | (reg & 7))
         return self
 
     def push(self, reg):
         reg = reg_index(reg)
         if reg < 8:
-            self.append(0x50 | reg)
+            self.append_byte(0x50 | reg)
         else:
-            self.append(0x41, 0x50 | (reg & 7))
+            self.append_byte(0x41, 0x50 | (reg & 7))
         return self
 
     def pop(self, reg):
         reg = reg_index(reg)
         if reg < 8:
-            self.append(0x58 | reg)
+            self.append_byte(0x58 | reg)
         else:
-            self.append(0x41, 0x58 | (reg & 7))
+            self.append_byte(0x41, 0x58 | (reg & 7))
         return self
 
     def ret(self):
-        self.append(0xC3)
+        self.append_byte(0xC3)
         return self
 
     def add_rsp(self, imm):
-        self.append(0x48, 0x81, 0xC4)
-        self.append_u32(imm)
+        self.append_byte(0x48, 0x81, 0xC4)
+        self.append_word(imm)
         return self
 
     def sub_rsp(self, imm):
-        self.append(0x48, 0x81, 0xEC)
-        self.append_u32(imm)
+        self.append_byte(0x48, 0x81, 0xEC)
+        self.append_word(imm)
         return self
 
     def xor(self, reg, rm):
         self.rex(reg, rm)
-        self.append(0x33)
+        self.append_byte(0x33)
         self.modrm_reg(reg, rm)
 
     def add(self, reg, rm):
         self.rex(reg, rm)
-        self.append(0x03)
+        self.append_byte(0x03)
         self.modrm_reg(reg, rm)
 
     def add_imm(self, rm, imm):
         self.rex(0, rm)
-        self.append(0x81)
+        self.append_byte(0x81)
         self.modrm_reg(0, rm)
-        self.append_u32(imm)
+        self.append_word(imm)
 
     def inc(self, rm):
         self.rex(0, rm)
-        self.append(0xFF)
+        self.append_byte(0xFF)
         self.modrm_reg(0, rm)
 
     def dec(self, rm):
         self.rex(0, rm)
-        self.append(0xFF)
+        self.append_byte(0xFF)
         self.modrm_reg(1, rm)
 
     def jnz(self, label):
-        self.append(0x0F, 0x85)
+        self.append_byte(0x0F, 0x85)
         self.jump(label)
+        
+        
+        
+class AmdIR:
+    def __init__(self, mem):
+        self.amd = Amd()
+        self.mem = mem
+        # shadows are XMM/YMM registers the shadow the stack slots
+        self.first_shadow = 3
+        self.count_shadows = 3 if sys.platform == "win32" else 13
+        
+    def buf(self):
+        return self.amd.buf
+        
+    def load_stack(self, dst, idx):
+        self.amd.movsd_xmm_mem(dst, "rsp", 8 * idx)
+        
+    def save_stack(self, src, idx):
+        self.amd.movsd_mem_xmm("rsp", 8 * idx, src)
+        
+    def load_mem(self, dst, idx):
+        self.amd.movsd_xmm_mem(dst, "rbp", 8 * idx)
+        
+    def save_mem(self, src, idx):
+        self.amd.movsd_mem_xmm("rbp", 8 * idx, src)
+        
+    def neg(self, dst):        
+        self.amd.movsd_xmm_mem(1, "rbp", 8 * self.mem.constant(-0.0))
+        self.amd.vxorpd(dst, 0, 1)
+        
+    def abs(self, dst):       
+        self.amd.movsd_xmm_mem(1, "rbp", 8 * self.mem.constant(-0.0))
+        self.amd.vandnpd(dst, 1, 0)
+        
+    def root(self, dst):      
+        self.amd.vsqrtsd(dst, 0)
+        
+    def square(self, dst):
+        self.amd.vmulsd(dst, 0, 0)
+        
+    def cube(self, dst):
+        self.amd.vmulsd(1, 0, 0)
+        self.amd.vmulsd(dst, 0, 1)
+        
+    def recip(self, dst):     
+        self.amd.movsd_xmm_mem(1, "rbp", 8 * self.mem.constant(1.0))
+        self.amd.vdivsd(dst, 1, 0)
+        
+    def plus(self, dst, r):
+        self.amd.vaddsd(dst, 0, r)
 
+    def minus(self, dst, r):
+        self.amd.vsubsd(dst, 0, r)
+        
+    def times(self, dst, r):
+        self.amd.vmulsd(dst, 0, r)
+        
+    def divide(self, dst, r):
+        self.amd.vdivsd(dst, 0, r)        
+        
+    def gt(self, dst, r):
+        self.amd.vcmpnlesd(dst, 0, r)
+
+    def geq(self, dst, r):
+        self.amd.vcmpnltsd(dst, 0, r)
+        
+    def lt(self, dst, r):
+        self.amd.vcmpltsd(dst, 0, r)
+        
+    def leq(self, dst, r):
+        self.amd.vcmplesd(dst, 0, r)
+        
+    def eq(self, dst, r):
+        self.amd.vcmpeqsd(dst, 0, r)
+        
+    def neq(self, dst, r):
+        self.amd.vcmpneqsd(dst, 0, r)
+        
+    def boolean_and(self, dst, r):
+        self.amd.vandpd(dst, 0, r)
+        
+    def boolean_or(self, dst, r):
+        self.amd.vorpd(dst, 0, r)
+        
+    def boolean_xor(self, dst, r):
+        self.amd.vxorpd(dst, 0, r)        
+        
+    def call_unary(self, dst, idx):
+        # Windows 32-byte home area
+        if self.amd.is_win:
+            self.amd.sub_rsp(32)
+            
+        self.amd.mov_reg_mem("rax", "rbx", 8 * idx)
+        self.amd.call("rax")
+        
+        if dst != 0:
+            self.amd.movapd(dst, 0)
+            
+        if self.amd.is_win:
+            self.amd.add_rsp(32)            
+    
+    def call_binary(self, dst, r, idx):
+        # Windows 32-byte home area
+        if self.amd.is_win:
+            amd.sub_rsp(32)
+            
+        if r != 1:
+            self.amd.movapd(1, r)            
+            
+        self.amd.mov_reg_mem("rax", "rbx", 8 * idx)
+        self.amd.call("rax")
+
+        if dst != 0:
+            self.amd.movapd(dst, 0)
+            
+        if self.amd.is_win:
+            self.amd.add_rsp(32)            
+            
+    def ifelse(self, dst, cond, true_reg, false_reg):
+        self.amd.vandpd(true_reg, true_reg, cond)
+        self.amd.vandnpd(cond, cond, false_reg)
+        self.amd.vorpd(dst, true_reg, cond)
+        
+    def stack_size(self):
+        cap = self.mem.stack_size
+        pad = (cap + 1) & 1
+        return (cap + pad) * 8
+        
+    def prepend_prologue(self):
+        # note that we generate the prologue after the main body
+        # because we need to know the stack size        
+        self.amd.begin_prepend()        
+        
+        self.amd.push("rbp")
+        self.amd.push("rbx")
+        
+        if self.amd.is_win:
+            self.amd.mov("rbp", "rcx")
+            self.amd.mov("rbx", "rdx")  # different than the rust code        
+        else:
+            self.amd.mov("rbp", "rdi")
+            self.amd.mov("rbx", "rsi")  # different than the rust code
+        
+        self.amd.sub_rsp(self.stack_size())
+        self.amd.end_prepend()        
+
+    def append_epilogue(self):
+        self.amd.vzeroupper()
+        self.amd.add_rsp(self.stack_size())
+        self.amd.pop("rbx")
+        self.amd.pop("rbp")
+        self.amd.ret()
+
+        
+        
+##########################################################################
 
 def test_avx():
     amd = Amd()
