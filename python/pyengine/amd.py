@@ -1,6 +1,7 @@
 import sys
 
 from . import assembler
+from . import vectorizer
 
 def reg_index(reg):
     if isinstance(reg, int):
@@ -45,7 +46,16 @@ def reg_index(reg):
 class Amd(assembler.Assembler):
     def __init__(self):
         super().__init__()
-        self.is_win = (sys.platform == "win32")
+        self.is_win = (sys.platform == "win32")        
+        
+    def apply_jumps(self):
+        for label, k in self.jumps:
+            target = self.labels[label]
+            offset = target - (k + 4)
+            self.buf[k] = offset & 0xFF
+            self.buf[k + 1] = (offset >> 8) & 0xFF
+            self.buf[k + 2] = (offset >> 16) & 0xFF
+            self.buf[k + 3] = (offset >> 24) & 0xFF                
 
     def modrm_reg(self, reg, rm):
         reg = reg_index(reg)
@@ -367,6 +377,9 @@ class AmdIR:
         # shadows are XMM/YMM registers the shadow the stack slots
         self.first_shadow = 3
         self.count_shadows = 3 if sys.platform == "win32" else 13
+        
+    def vectorize(self):
+        return vectorizer.vectorize_amd(self.amd, self.mem)        
         
     def buf(self):
         return self.amd.buf

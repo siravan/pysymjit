@@ -7,7 +7,6 @@ import platform
 
 from . import amd
 from . import arm
-from . import vectorizer
 from . import tree
 
 def can_compile():
@@ -268,8 +267,8 @@ class PyCompiler:
         self.mem = mem
         self.prog = prog
 
-        vprog = amd.Amd()
-        vec = vectorizer.vectorize_func(vprog, mem)
+        vprog = self.assembler(ty)(mem)
+        vec = vprog.vectorize()
 
         fac = ctypes.CFUNCTYPE(
             ctypes.c_size_t,
@@ -280,7 +279,7 @@ class PyCompiler:
             ctypes.c_size_t,    # func
         )
 
-        self.vcode = Code(vprog.buf)
+        self.vcode = Code(vprog.buf())
         self.vfunc = fac(self.vcode.addr)
         self.vprog = vprog         
         self.populate()

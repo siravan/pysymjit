@@ -1,11 +1,22 @@
 from . import assembler
+from . import vectorizer
 
 class Arm(assembler.Assembler):
     def __init__(self):
         self.buf = bytearray()
         self.tail = None
         self.labels = {}
-        self.jumps = []
+        self.jumps = []        
+        
+    def apply_jumps(self):
+        for label, k in self.jumps:
+            target = self.labels[label]
+            offset = (target - k) >> 2 
+            imm19 = (offset & 0x0007ffff) << 5
+            self.buf[k] |= imm19 & 0xFF
+            self.buf[k + 1] |= (imm19 >> 8) & 0xFF
+            self.buf[k + 2] |= (imm19 >> 16) & 0xFF
+            self.buf[k + 3] |= (imm19 >> 24) & 0xFF
         
     def rd(self, x):
         if x == "sp":
@@ -40,6 +51,10 @@ class Arm(assembler.Assembler):
     def imm(self, x):
         assert x < 4096
         return x << 10
+        
+    def imm19(self, x):
+        assert abs(x) < 262144
+        return x << 10        
 
     def ofs(self, x):
         assert (x & 7 == 0) and (x < 32768)
@@ -101,15 +116,45 @@ class Arm(assembler.Assembler):
         return self
 
     # x-registers immediate ops
-    def add(self, rd, rn, imm):
+    def add_imm(self, rd, rn, imm):
         # add x(rd), x(rn), imm
         self.append_word(0x91000000 | self.rd(rd) | self.rn(rn) | self.imm(imm))
         return self
     
-    def sub(self, rd, rn, imm):
+    def sub_imm(self, rd, rn, imm):
         # sub x(rd), x(rn), imm
         self.append_word(0xd1000000 | self.rd(rd) | self.rn(rn) | self.imm(imm))    
         return self
+        
+    def adds_imm(self, rd, rn, imm):
+        # add x(rd), x(rn), imm
+        self.append_word(0xb1000000 | self.rd(rd) | self.rn(rn) | self.imm(imm))
+        return self
+    
+    def subs_imm(self, rd, rn, imm):
+        # sub x(rd), x(rn), imm
+        self.append_word(0xf1000000 | self.rd(rd) | self.rn(rn) | self.imm(imm))    
+        return self        
+        
+    def add(self, rd, rn, rm):
+        # add x(rd), x(rn), x(rm)
+        self.append_word(0x8b000000 | self.rd(rd) | self.rn(rn) | self.rm(rm))
+        return self
+    
+    def sub(self, rd, rn, rm):
+        # sub x(rd), x(rn), x(rm)
+        self.append_word(0xcb000000 | self.rd(rd) | self.rn(rn) | self.rm(rm))    
+        return self        
+        
+    def add_lsl(self, rd, rn, rm, shift):
+        # add x(rd), x(rn), x(rm), LSL #shift
+        self.append_word(0x8b000000 | self.rd(rd) | self.rn(rn) | self.rm(rm)) | self.imm(shift & 3)
+        return self
+    
+    def sub_lsl(self, rd, rn, rm, shift):
+        # sub x(rd), x(rn), x(rm), LSL #shift
+        self.append_word(0xcb000000 | self.rd(rd) | self.rn(rn) | self.rm(rm)) | self.imm(shift & 3)
+        return self                
 
     # floating point ops
     def fadd(self, rd, rn, rm):
@@ -204,6 +249,24 @@ class Arm(assembler.Assembler):
         self.append_word(0xd63f0000 | self.rn(rn))
         return self
         
+    def b_eq(self, label):
+        self.jump(label, code=0x54000000)
+        
+    def b_ne(self, label):
+        self.jump(label, code=0x54000001)
+        
+    def b_lt(self, label):
+        self.jump(label, code=0x5400000b)
+        
+    def b_le(self, label):
+        self.jump(label, code=0x5400000d)
+        
+    def b_gt(self, label):
+        self.jump(label, code=0x5400000c)
+        
+    def b_ge(self, label):
+        self.jump(label, code=0x5400000a)
+        
     def ret(self): 
         # ret
         self.append_word(0xd65f03c0)
@@ -229,6 +292,9 @@ class ArmIR:
         # shadows are d(3)-d(7)
         self.first_shadow = 3
         self.count_shadows = 5
+        
+    def vectorize(self):
+        return vectorizer.vectorize_arm(self.arm, self.mem)        
         
     def buf(self):
         return self.arm.buf
@@ -347,7 +413,7 @@ class ArmIR:
         n = self.stack_size()
         self.arm.ldp_x(19, 20, "sp", n+16)
         self.arm.ldr_x("lr", "sp", n)
-        self.arm.add("sp", "sp", n+32)
+        self.arm.add_imm("sp", "sp", n+32)
         self.arm.ret()    
         
 
@@ -381,7 +447,7 @@ def test_arm():
     assert arm.str_d(0, 30, 200).test([0xC0, 0x67, 0x00, 0xFD])    
     assert arm.ldr_x(29, "sp", 8).test([0xFD, 0x07, 0x40, 0xF9])
     assert arm.ldr_x(30, "sp", 16).test([0xFE, 0x0B, 0x40, 0xF9])
-    assert arm.add("sp", "sp", 32).test([0xFF, 0x83, 0x00, 0x91])
+    assert arm.add_imm("sp", "sp", 32).test([0xFF, 0x83, 0x00, 0x91])
     assert arm.vand(2, 5, 22).test([0xA2, 0x1C, 0x36, 0x0E])
     assert arm.orr(1, 0, k+1).test([0x01, 0x1C, 0xAC, 0x0E])
     assert arm.eor(7, 15, 31).test([0xE7, 0x1D, 0x3F, 0x2E])

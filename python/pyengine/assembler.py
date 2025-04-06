@@ -34,18 +34,9 @@ class Assembler:
     def set_label(self, label):
         self.labels[label] = len(self.buf)
 
-    def jump(self, label):
+    def jump(self, label, code=0):
         self.jumps.append((label, len(self.buf)))
-        self.append_word(0)
-
-    def apply_jumps(self):
-        for label, k in self.jumps:
-            target = self.labels[label]
-            offset = target - (k + 4)
-            self.buf[k] = offset & 0xFF
-            self.buf[k + 1] = (offset >> 8) & 0xFF
-            self.buf[k + 2] = (offset >> 16) & 0xFF
-            self.buf[k + 3] = (offset >> 24) & 0xFF        
+        self.append_word(code)
             
     def test(self, b):
         if self.buf == bytes(b):
