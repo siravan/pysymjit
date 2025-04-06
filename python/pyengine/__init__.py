@@ -12,24 +12,14 @@ from . import tree
 
 def can_compile():
     return  (
-        (sys.platform == "linux" and platform.machine() == "x86_64") or
-        (sys.platform == "darwin" and platform.machine() == "x86_64") or
-        (sys.platform == "win32" and platform.machine() == "AMD64") or
-        (sys.platform == "linux" and platform.machine() == "aarch64") or
-        (sys.platform == "darwin" and platform.machine() == "aarch64")
+        (sys.platform in ["linux", "darwin"] and arch() in ["amd", "arm"]) or
+        (sys.platform == "win32" and arch() == "amd") 
     )
             
 def arch():
-    if (
-        (sys.platform == "linux" and platform.machine() == "x86_64") or
-        (sys.platform == "darwin" and platform.machine() == "x86_64") or
-        (sys.platform == "win32" and platform.machine() == "AMD64")
-    ):
+    if platform.machine() in ["x86_64", "AMD64"]:
         return "amd"        
-    elif (
-        (sys.platform == "linux" and platform.machine() == "aarch64") or
-        (sys.platform == "darwin" and platform.machine() == "aarch64")
-    ):
+    elif platform.machine() in ["arm64", "aarch64"]:
         return "arm"
     else:
         return None                 
