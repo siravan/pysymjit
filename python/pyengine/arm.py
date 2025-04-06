@@ -178,14 +178,19 @@ class Arm(assembler.Assembler):
         return self
 
     def fsqrt(self, rd, rn):
-        # fsqrt d(rd), d(rn), d(rm)
+        # fsqrt d(rd), d(rn)
         self.append_word(0x1e61c000 | self.rd(rd) | self.rn(rn))
         return self
         
     def fneg(self, rd, rn):
-        # fneg d(rd), d(rn), d(rm)
+        # fneg d(rd), d(rn)
         self.append_word(0x1e614000 | self.rd(rd) | self.rn(rn))
         return self
+        
+    def fabs(self, rd, rn):
+        # fabs d(rd), d(rn)
+        self.append_word(0x1e60c000 | self.rd(rd) | self.rn(rn))
+        return self        
 
     # logical ops
     def vand(self, rd, rn, rm):
@@ -315,7 +320,7 @@ class ArmIR:
         self.arm.fneg(dst, 0)
         
     def abs(self, dst):       
-        raise ValueError("abs not implemented yet")
+        self.arm.fabs(dst, 0)
         
     def root(self, dst):      
         self.arm.fsqrt(dst, 0)
