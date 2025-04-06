@@ -93,11 +93,11 @@ def vectorize_arm(arm, mem):
     last_obs = first_obs + mem.count_obs
 
     # prologue
-    arm.sub_lsl("sp", "sp", 8, 3)
-    arm.str_x("sp", "sp", 0)
+    arm.sub_imm("sp", "sp", 8 << 3)
+    arm.str_x("lr", "sp", 0)
     arm.stp_x(20, 21, "sp", 16)
     arm.stp_x(22, 23, "sp", 32)
-    arm.stp_x(23, 24, "sp", 48)        
+    arm.stp_x(24, 25, "sp", 48)
     
     arm.mov(20, 0)  # heap
     arm.mov(21, 1)  # table
@@ -119,7 +119,7 @@ def vectorize_arm(arm, mem):
     arm.mov(0, 20)
     arm.mov(1, 21)
         
-    arm.bsl(24)
+    arm.blr(24)
 
     arm.mov(2, 22)
 
@@ -128,18 +128,18 @@ def vectorize_arm(arm, mem):
         arm.str_d(0, 2, 0)
         arm.add_lsl(2, 2, 23, 3)    
 
-    arm.add_imm(22, 8)
-    arm.subs_imm(25, 8)
+    arm.add_imm(22, 22, 8)
+    arm.subs_imm(25, 25, 1)
     arm.b_ne("loop")
 
     arm.mov(0, 23)
 
     # epilogue
-    arm.ldp_x(23, 24, "sp", 48)        
+    arm.ldp_x(24, 25, "sp", 48)        
     arm.ldp_x(22, 23, "sp", 32)
     arm.ldp_x(20, 21, "sp", 16)
-    arm.ldr_x("sp", "sp", 0)
-    arm.add_lsl("sp", "sp", 8, 3)
+    arm.ldr_x("lr", "sp", 0)
+    arm.add_imm("sp", "sp", 8 << 3)
     
     arm.ret()
 

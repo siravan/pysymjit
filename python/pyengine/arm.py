@@ -148,12 +148,12 @@ class Arm(assembler.Assembler):
         
     def add_lsl(self, rd, rn, rm, shift):
         # add x(rd), x(rn), x(rm), LSL #shift
-        self.append_word(0x8b000000 | self.rd(rd) | self.rn(rn) | self.rm(rm)) | self.imm(shift & 3)
+        self.append_word(0x8b000000 | self.rd(rd) | self.rn(rn) | self.rm(rm) | self.imm(shift & 3))
         return self
     
     def sub_lsl(self, rd, rn, rm, shift):
         # sub x(rd), x(rn), x(rm), LSL #shift
-        self.append_word(0xcb000000 | self.rd(rd) | self.rn(rn) | self.rm(rm)) | self.imm(shift & 3)
+        self.append_word(0xcb000000 | self.rd(rd) | self.rn(rn) | self.rm(rm) | self.imm(shift & 3))
         return self                
 
     # floating point ops
@@ -401,7 +401,7 @@ class ArmIR:
         self.arm.begin_prepend()        
         
         n = self.stack_size()
-        self.arm.sub("sp", "sp", n+32)
+        self.arm.sub_imm("sp", "sp", n+32)
         self.arm.str_x("lr", "sp", n)
         self.arm.stp_x(19, 20, "sp", n+16)
         self.arm.mov(19, 0)

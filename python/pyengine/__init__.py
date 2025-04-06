@@ -290,18 +290,20 @@ class PyCompiler:
         # free_function(self.vaddr)        
         
     def assembler(self, ty):
-        if arch() == "amd" and (ty == "native" or ty == "amd"):
+        a = arch()
+        
+        if a == "amd" and (ty == "native" or ty == "amd"):
             prog = amd.AmdIR
             self.can_run = True
-        elif arch() == "arm" and (ty == "native" or ty == "arm"):
+        elif a == "arm" and (ty == "native" or ty == "arm"):
             prog = arm.ArmIR
             self.can_run = True
-        elif arch == "amd" and ty == "arm":
-            prog = amd.AmdIR
+        elif a == "amd" and ty == "arm":
+            prog = arm.ArmIR
             self.can_run = False
             print("x64 code is requested on a non-compatible platform. Cannot run the resulting code.")
-        elif arch == "arm" and ty == "amd":
-            prog = arm.ArmIR
+        elif a == "arm" and ty == "amd":
+            prog = amd.AmdIR
             self.can_run = False
             print("aarch64 code is requested on a non-compatible platform. Cannot run the resulting code.")
         else:
