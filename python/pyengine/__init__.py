@@ -11,17 +11,29 @@ from . import vectorizer
 from . import tree
 
 def can_compile():
-    return True
-
-    if sys.platform == "linux" and platform.machine() == "x86_64":
-        return True
-    elif sys.platform == "darwin" and platform.machine() == "x86_64":
-        return True
-    elif sys.platform == "win32":
-        return True
+    return  (
+        (sys.platform == "linux" and platform.machine() == "x86_64") or
+        (sys.platform == "darwin" and platform.machine() == "x86_64") or
+        (sys.platform == "win32" and platform.machine() == "AMD64") or
+        (sys.platform == "linux" and platform.machine() == "aarch64") or
+        (sys.platform == "darwin" and platform.machine() == "aarch64")
+    )
+            
+def arch():
+    if (
+        (sys.platform == "linux" and platform.machine() == "x86_64") or
+        (sys.platform == "darwin" and platform.machine() == "x86_64") or
+        (sys.platform == "win32" and platform.machine() == "AMD64")
+    ):
+        return "amd"        
+    elif (
+        (sys.platform == "linux" and platform.machine() == "aarch64") or
+        (sys.platform == "darwin" and platform.machine() == "aarch64")
+    ):
+        return "arm"
     else:
-        return False
-
+        return None                 
+                
 
 class Memory:
     def __init__(self, model):
@@ -92,40 +104,42 @@ class Memory:
 
 
 class VirtualTable:
+    libm = None
+
     def __init__(self):
-        if sys.platform == "win32":
-            self.lib = ctypes.cdll.msvcrt
-            self.is_win = True
-        else:
-            path = find_library("m")
-            self.lib = ctypes.CDLL(path)
-            self.is_win = False
+        if VirtualTable.libm == None:
+            if sys.platform == "win32":
+                VirtualTable.libm = ctypes.cdll.msvcrt                
+            else:
+                path = find_library("m")
+                VirtualTable.libm = ctypes.CDLL(path)                
 
         self.addr = []
         self.dict = {}
+        libm = VirtualTable.libm
 
-        self.exp = self.unary(self.lib.exp, "exp")
-        self.log = self.unary(self.lib.log, "log")
-        self.log10 = self.unary(self.lib.log10, "log10")
-        self.pow = self.binary(self.lib.pow, "pow")
+        self.exp = self.unary(libm.exp, "exp")
+        self.log = self.unary(libm.log, "log")
+        self.log10 = self.unary(libm.log10, "log10")
+        self.pow = self.binary(libm.pow, "pow")
 
-        self.sin = self.unary(self.lib.sin, "sin")
-        self.cos = self.unary(self.lib.cos, "cos")
-        self.tan = self.unary(self.lib.tan, "tan")
+        self.sin = self.unary(libm.sin, "sin")
+        self.cos = self.unary(libm.cos, "cos")
+        self.tan = self.unary(libm.tan, "tan")
 
-        self.sinh = self.unary(self.lib.sinh, "sinh")
-        self.cosh = self.unary(self.lib.cosh, "cosh")
-        self.tanh = self.unary(self.lib.tanh, "tanh")
+        self.sinh = self.unary(libm.sinh, "sinh")
+        self.cosh = self.unary(libm.cosh, "cosh")
+        self.tanh = self.unary(libm.tanh, "tanh")
 
-        self.asin = self.unary(self.lib.asin, "asin")   
-        self.acos = self.unary(self.lib.acos, "acos")
-        self.atan = self.unary(self.lib.atan, "atan")
+        self.asin = self.unary(libm.asin, "asin")   
+        self.acos = self.unary(libm.acos, "acos")
+        self.atan = self.unary(libm.atan, "atan")
 
         # msvcrt does not export inverse hyperbolic functions!
-        if not self.is_win:
-            self.asinh = self.unary(self.lib.asinh, "asinh")    
-            self.acosh = self.unary(self.lib.acosh, "acosh")
-            self.atanh = self.unary(self.lib.atanh, "atanh")
+        if sys.platform != "win32":
+            self.asinh = self.unary(libm.asinh, "asinh")    
+            self.acosh = self.unary(libm.acosh, "acosh")
+            self.atanh = self.unary(libm.atanh, "atanh")
 
     def unary(self, func, name):
         self.addr.append(ctypes.c_ulonglong.from_buffer(func).value)
@@ -151,6 +165,9 @@ class VirtualTable:
 class Code:
     alloc = None
     free = None
+    libc = None
+    mprotect = None
+    icache_invalidate = None    
     
     MEM_COMMIT = 0x00001000
     MEM_RESERVE = 0x00002000
@@ -189,35 +206,48 @@ class Code:
             )
             buf = bytes(buf)
             ctypes.memmove(self.addr, buf, len(buf))
-        else:
-            path = find_library('c')
-            libc = ctypes.CDLL(path)
-            # print(libc.pthread_jit_write_protect_np(1))
-
+        else:   # linux/darwin             
+            # macOS, especially on Apple Silicon, requires special care!
+            # 1. We need to pass MAP_JIT to mmap
+            # 2. W^X rule: the memory cannot be both writable and executable
+            # 3. We create the memory as Read+Write, write the code, and then
+            #   change the mode to Read+Execute using mprotect
+            # 4. Question: do we need to call pthread_jit_write_protect_np?
+            # 5. Question: do we need to invalidate cache on aarch64?
+            #   note: function invalidate_cache is present but not called yet
+            try:
+                MAP_JIT = mmap.MAP_JIT  # mmap.MAP_JIT is defined in python 1.13
+            except:
+                MAP_JIT = 0                            
+        
             self.code = mmap.mmap(
                 -1,
                 len(buf),
                 prot=mmap.PROT_READ | mmap.PROT_WRITE,
-                flags=mmap.MAP_ANON | mmap.MAP_PRIVATE | mmap.MAP_JIT,
+                flags=mmap.MAP_ANON | mmap.MAP_PRIVATE | MAP_JIT,
             )
 
             self.code.write(buf)
             self.code.flush()
+            self.addr = ctypes.addressof(ctypes.c_long.from_buffer(self.code))           
 
-            self.addr = ctypes.addressof(ctypes.c_long.from_buffer(self.code))
+            if Code.mprotect == None:
+                Code.mprotect = ctypes.pythonapi.mprotect
+                Code.mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
+                Code.mprotect.restype = ctypes.c_int                
+                
+            Code.mprotect(self.addr, len(buf), mmap.PROT_READ | mmap.PROT_EXEC)
             
+    def invalidate_cache(self):
+        if Code.libc == None:
+            path = find_library('c')
+            Code.libc = ctypes.CDLL(path)
 
-            icache_invalidate = libc.sys_icache_invalidate
-            icache_invalidate.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
-            icache_invalidate.restype = ctypes.c_int
-            res = icache_invalidate(self.addr, 4096)
-            # print('icache: ', res)
-
-            mprotect = ctypes.pythonapi.mprotect
-            mprotect.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
-            mprotect.restype = ctypes.c_int
-            mprotect(self.addr, len(buf), mmap.PROT_READ | mmap.PROT_EXEC)
-            
+        if Code.icache_invalidate == None:
+            Code.icache_invalidate = self.libc.sys_icache_invalidate
+            Code.icache_invalidate.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+            Code.icache_invalidate.restype = ctypes.c_int
+        Code.icache_invalidate(self.addr, len(self.code))
 
     def __del__(self):
         if sys.platform == "win32":
@@ -229,12 +259,8 @@ class PyCompiler:
     def __init__(self, model, ty="native"):
         mem = Memory(model)
         vt = VirtualTable()
-
-        if ty == "arm":
-            prog = arm.ArmIR(mem)
-        else:
-            prog = amd.AmdIR(mem)
-            
+        
+        prog = self.assembler(ty)(mem)
         model.compile(0, prog, mem, vt)
 
         fac = ctypes.CFUNCTYPE(
@@ -272,7 +298,26 @@ class PyCompiler:
     def __del__(self):
         pass
         # free_function(self.addr)
-        # free_function(self.vaddr)           
+        # free_function(self.vaddr)        
+        
+    def assembler(self, ty):
+        if arch() == "amd" and (ty == "native" or ty == "amd"):
+            prog = amd.AmdIR
+            self.can_run = True
+        elif arch() == "arm" and (ty == "native" or ty == "arm"):
+            prog = arm.ArmIR
+            self.can_run = True
+        elif arch == "amd" and ty == "arm":
+            prog = amd.AmdIR
+            self.can_run = False
+            print("x64 code is requested on a non-compatible platform. Cannot run the resulting code.")
+        elif arch == "arm" and ty == "amd":
+            prog = arm.ArmIR
+            self.can_run = False
+            print("aarch64 code is requested on a non-compatible platform. Cannot run the resulting code.")
+        else:
+            raise ValueError(f"unrecognized processor type: {ty}")
+        return prog            
 
     def populate(self):
         first_state = self.mem.first_state
@@ -302,14 +347,16 @@ class PyCompiler:
             fd.write(buf)
             
     def execute(self, t = 0.0):
-        self.func(self.heap_ptr, self.table_ptr)
+        if self.can_run:
+            self.func(self.heap_ptr, self.table_ptr)
         
     def execute_vectorized(self, buf):
-        self.vfunc(
-            self.heap_ptr,
-            self.table_ptr,
-            ctypes.addressof(ctypes.c_long.from_buffer(buf)),
-            ctypes.c_size_t(buf.shape[1]),
-            self.code.addr,
-        ) 
+        if self.can_run:
+            self.vfunc(
+                self.heap_ptr,
+                self.table_ptr,
+                ctypes.addressof(ctypes.c_long.from_buffer(buf)),
+                ctypes.c_size_t(buf.shape[1]),
+                self.code.addr,
+            ) 
 
